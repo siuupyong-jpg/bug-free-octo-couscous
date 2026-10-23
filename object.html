@@ -8,7 +8,12 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="theme-color" content="#1e293b">
     
-    <title>진성디지털 - 여수 학교 관리 시스템</title>
+    <title>진성디지털 - 여수 학교 실시간 A/S 관리</title>
+    
+    <!-- Firebase SDK (실시간 데이터베이스 연동) -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+
     <style>
         * {
             box-sizing: border-box;
@@ -316,7 +321,7 @@
 <div class="app-container">
     <header>
         <h1>진성디지털 사이트 구분</h1>
-        <p>여수 지역 학교 소속 판별 및 A/S 이력 관리</p>
+        <p>여수 지역 학교 소속 판별 및 실시간 A/S 공유</p>
     </header>
 
     <div class="main-content">
@@ -333,7 +338,7 @@
 
             <div id="asSection" class="as-section">
                 <div class="as-header">
-                    <h3>🛠 A/S 조치 이력</h3>
+                    <h3>🛠 실시간 A/S 조치 이력</h3>
                     <button class="btn-add" onclick="openAddModal()">+ 추가</button>
                 </div>
                 <div id="asList" class="as-list"></div>
@@ -349,7 +354,7 @@
 <div id="asModal" class="modal">
     <div class="modal-content">
         <h3 id="modalTitle">A/S 이력 등록</h3>
-        <input type="hidden" id="editIndex" value="-1">
+        <input type="hidden" id="editKey" value="">
         <div class="form-group">
             <label>점검 일자</label>
             <input type="date" id="modalDate">
@@ -370,7 +375,22 @@
 </div>
 
 <script>
-    // 교육청 사이트 목록 (약칭 및 전체 명칭)
+    // 전달해주신 Firebase 설정 정보 적용 완료
+    const firebaseConfig = {
+        apiKey: "AIzaSyBKzQRpRJbybbxV2Z1E5pfQyJRAYoLLlRI",
+        authDomain: "jinsung-7995d.firebaseapp.com",
+        databaseURL: "https://jinsung-7995d-default-rtdb.firebaseio.com",
+        projectId: "jinsung-7995d",
+        storageBucket: "jinsung-7995d.firebasestorage.app",
+        messagingSenderId: "704344969737",
+        appId: "1:704344969737:web:e731b398475a0cf9a4ded8",
+        measurementId: "G-DPTE497N8H"
+    };
+
+    // Firebase 초기화
+    firebase.initializeApp(firebaseConfig);
+    const database = firebase.database();
+
     const officeSchoolList = [
         { fullName: "백초초등학교", shortName: "백초초" },
         { fullName: "동백초등학교", shortName: "동백초" },
@@ -421,11 +441,6 @@
 
     let currentSchool = null;
 
-    function getAsStorage() {
-        const saved = localStorage.getItem("jinsung_as_data");
-        return saved ? JSON.parse(saved) : {};
-    }
-
     function handleInput() {
         const query = document.getElementById('schoolInput').value.trim();
         const resultCard = document.getElementById('resultCard');
@@ -433,6 +448,9 @@
         const asSection = document.getElementById('asSection');
 
         asSection.style.display = "none";
+        if (currentSchool) {
+            database.ref('as_history/' + sanitizePath(currentSchool)).off();
+        }
 
         if (query === "") {
             resultCard.style.display = "none";
@@ -441,7 +459,6 @@
             return;
         }
 
-        // 교육청 관리 사이트 매칭 판단
         const matchedOffice = officeSchoolList.find(item => 
             item.fullName.includes(query) || 
             item.shortName.includes(query) || 
@@ -452,10 +469,13 @@
             currentSchool = matchedOffice.fullName;
             showResult(matchedOffice.fullName, "교육청 관리 사이트", "badge-office");
         } else {
-            // 그 외 모든 학교 -> 진성디지털 직속 사이트
             currentSchool = query.endsWith("고") || query.endsWith("중") || query.endsWith("초") ? query : query + " (직속)";
             showResult(currentSchool, "진성디지털 직속 사이트", "badge-jinsung");
         }
+    }
+
+    function sanitizePath(str) {
+        return str.replace(/[.#$\[\]]/g, "_");
     }
 
     function showResult(title, badgeText, badgeClass) {
@@ -470,69 +490,73 @@
     function handleKeyPress(event) {
         if (event.key === "Enter") {
             if (currentSchool) {
-                renderAsList();
+                listenRealtimeAsList();
                 document.getElementById('asSection').style.display = "block";
             }
         }
     }
 
-    function renderAsList() {
-        const data = getAsStorage();
-        const list = data[currentSchool] || [];
-        const container = document.getElementById('asList');
-        container.innerHTML = "";
+    function listenRealtimeAsList() {
+        const safePath = sanitizePath(currentSchool);
+        const ref = database.ref('as_history/' + safePath);
 
-        if (list.length === 0) {
-            container.innerHTML = "<div style='color:#94a3b8; text-align:center; padding:12px; font-size:12px;'>등록된 A/S 이력이 없습니다.</div>";
-            return;
-        }
+        ref.on('value', (snapshot) => {
+            const data = snapshot.val();
+            const container = document.getElementById('asList');
+            container.innerHTML = "";
 
-        list.forEach((item, index) => {
-            const div = document.createElement('div');
-            div.className = "as-item";
-            div.innerHTML = `
-                <div class="as-item-header">
-                    <span class="as-date">${item.date}</span>
-                    <span class="as-engineer">${item.engineer}</span>
-                </div>
-                <div class="as-content">${item.content}</div>
-                <div class="btn-group">
-                    <button class="btn-edit" onclick="openEditModal(${index})">수정</button>
-                    <button class="btn-delete" onclick="deleteAsItem(${index})">삭제</button>
-                </div>
-            `;
-            container.appendChild(div);
+            if (!data) {
+                container.innerHTML = "<div style='color:#94a3b8; text-align:center; padding:12px; font-size:12px;'>등록된 A/S 이력이 없습니다.</div>";
+                return;
+            }
+
+            const keys = Object.keys(data).reverse();
+            keys.forEach((key) => {
+                const item = data[key];
+                const div = document.createElement('div');
+                div.className = "as-item";
+                div.innerHTML = `
+                    <div class="as-item-header">
+                        <span class="as-date">${item.date}</span>
+                        <span class="as-engineer">${item.engineer}</span>
+                    </div>
+                    <div class="as-content">${item.content}</div>
+                    <div class="btn-group">
+                        <button class="btn-edit" onclick="openEditModal('${key}', '${item.date}', '${item.engineer}', '${escapeHtml(item.content)}')">수정</button>
+                        <button class="btn-delete" onclick="deleteAsItem('${key}')">삭제</button>
+                    </div>
+                `;
+                container.appendChild(div);
+            });
         });
     }
 
-    function deleteAsItem(index) {
+    function escapeHtml(str) {
+        return str.replace(/'/g, "\\'").replace(/"/g, "&quot;");
+    }
+
+    function deleteAsItem(key) {
         if (confirm("해당 A/S 이력을 삭제하시겠습니까?")) {
-            const data = getAsStorage();
-            if (data[currentSchool]) {
-                data[currentSchool].splice(index, 1);
-                localStorage.setItem("jinsung_as_data", JSON.stringify(data));
-                renderAsList();
-            }
+            const safePath = sanitizePath(currentSchool);
+            database.ref('as_history/' + safePath + '/' + key).remove();
         }
     }
 
     function openAddModal() {
         document.getElementById('modalTitle').innerText = `${currentSchool} A/S 추가`;
-        document.getElementById('editIndex').value = "-1";
+        document.getElementById('editKey').value = "";
         document.getElementById('modalDate').value = new Date().toISOString().substring(0, 10);
         document.getElementById('modalEngineer').value = "";
         document.getElementById('modalContent').value = "";
         document.getElementById('asModal').style.display = "flex";
     }
 
-    function openEditModal(index) {
-        const data = getAsStorage();
-        const item = data[currentSchool][index];
+    function openEditModal(key, date, engineer, content) {
         document.getElementById('modalTitle').innerText = `${currentSchool} A/S 수정`;
-        document.getElementById('editIndex').value = index;
-        document.getElementById('modalDate').value = item.date;
-        document.getElementById('modalEngineer').value = item.engineer;
-        document.getElementById('modalContent').value = item.content;
+        document.getElementById('editKey').value = key;
+        document.getElementById('modalDate').value = date;
+        document.getElementById('modalEngineer').value = engineer;
+        document.getElementById('modalContent').value = content;
         document.getElementById('asModal').style.display = "flex";
     }
 
@@ -541,7 +565,7 @@
     }
 
     function saveAsItem() {
-        const index = parseInt(document.getElementById('editIndex').value);
+        const key = document.getElementById('editKey').value;
         const date = document.getElementById('modalDate').value;
         const engineer = document.getElementById('modalEngineer').value.trim();
         const content = document.getElementById('modalContent').value.trim();
@@ -551,18 +575,16 @@
             return;
         }
 
-        const data = getAsStorage();
-        if (!data[currentSchool]) data[currentSchool] = [];
+        const safePath = sanitizePath(currentSchool);
+        const ref = database.ref('as_history/' + safePath);
 
-        if (index === -1) {
-            data[currentSchool].unshift({ date, engineer, content });
+        if (key === "") {
+            ref.push({ date, engineer, content });
         } else {
-            data[currentSchool][index] = { date, engineer, content };
+            ref.child(key).update({ date, engineer, content });
         }
 
-        localStorage.setItem("jinsung_as_data", JSON.stringify(data));
         closeModal();
-        renderAsList();
     }
 </script>
 
